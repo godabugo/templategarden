@@ -15,7 +15,8 @@ const Section: React.FC<SectionProps> = ({ section, elements, nestedSections = [
     selectedSectionId, 
     selectSection, 
     updateSection, 
-    selectElement 
+    selectElement,
+    updateElement
   } = useEditor();
   
   const [isDragging, setIsDragging] = useState(false);
@@ -29,6 +30,9 @@ const Section: React.FC<SectionProps> = ({ section, elements, nestedSections = [
   const [initialSize, setInitialSize] = useState({ width: 0, height: 0 });
   const [initialPosition, setInitialPosition] = useState({ x: 0, y: 0 });
   const [startPoint, setStartPoint] = useState({ x: 0, y: 0 });
+  
+  // Store original element positions before resize
+  const [originalElementPositions, setOriginalElementPositions] = useState<Record<string, { x: number, y: number }>>({});
   
   // Handle section selection
   const handleClick = (e: React.MouseEvent) => {
@@ -55,6 +59,13 @@ const Section: React.FC<SectionProps> = ({ section, elements, nestedSections = [
   const handleResizeStart = (e: React.MouseEvent, direction: string) => {
     e.stopPropagation();
     if (isSelected) {
+      // Store original positions of all elements in this section
+      const positions: Record<string, { x: number, y: number }> = {};
+      elements.forEach(element => {
+        positions[element.id] = { ...element.position };
+      });
+      setOriginalElementPositions(positions);
+      
       setIsResizing(true);
       setResizeDirection(direction);
       setInitialSize({ width: section.width, height: section.height });
@@ -67,62 +78,122 @@ const Section: React.FC<SectionProps> = ({ section, elements, nestedSections = [
     }
   };
   
-  // Handle mouse movement for dragging or resizing
+  // Update element positions when their parent section moves
+  const updateElementPositions = (
+    translationX: number, 
+    translationY: number, 
+    scaleX: number = 1, 
+    scaleY: number = 1
+  ) => {
+    elements.forEach(element => {
+      const originalPosition = originalElementPositions[element.id] || element.position;
+      
+      // If resizing (scaling), scale the position relative to the section
+      if (scaleX !== 1 || scaleY !== 1) {
+        const newPosition = {
+          x: originalPosition.x * scaleX,
+          y: originalPosition.y * scaleY
+        };
+        updateElement(element.id, { position: newPosition });
+      } 
+      // If just translating, move element with section
+      else if (translationX !== 0 || translationY !== 0) {
+        updateElement(element.id, { 
+          position: { 
+            x: element.position.x + translationX,
+            y: element.position.y + translationY
+          } 
+        });
+      }
+    });
+  };
+  
+  // Handle mouse movement for dragging or resizing with requestAnimationFrame for performance
   useEffect(() => {
+    let animationFrameId: number;
+    let lastX = 0;
+    let lastY = 0;
+    
     const handleMouseMove = (e: MouseEvent) => {
       if (isDragging) {
-        // Update section position during drag
-        const newPosition = {
-          x: Math.max(0, e.clientX - dragOffset.x),
-          y: Math.max(0, e.clientY - dragOffset.y),
-        };
-        updateSection(section.id, { position: newPosition });
+        // Update section position during drag using requestAnimationFrame
+        animationFrameId = requestAnimationFrame(() => {
+          const newX = Math.max(0, e.clientX - dragOffset.x);
+          const newY = Math.max(0, e.clientY - dragOffset.y);
+          
+          // Calculate translation since last update
+          const translationX = newX - (section.position.x + lastX);
+          const translationY = newY - (section.position.y + lastY);
+          
+          // Update element positions to move with parent section
+          updateElementPositions(translationX, translationY);
+          
+          // Update section position
+          updateSection(section.id, { 
+            position: { x: newX, y: newY } 
+          });
+          
+          lastX = newX - section.position.x;
+          lastY = newY - section.position.y;
+        });
       } else if (isResizing && resizeDirection) {
         // Handle resizing based on the direction
-        const deltaX = e.clientX - startPoint.x;
-        const deltaY = e.clientY - startPoint.y;
-        
-        let newWidth = initialSize.width;
-        let newHeight = initialSize.height;
-        
-        if (resizeDirection.includes('e')) {
-          newWidth = Math.max(100, initialSize.width + deltaX);
-        } else if (resizeDirection.includes('w')) {
-          const widthChange = Math.min(deltaX, initialSize.width - 100);
-          newWidth = initialSize.width - widthChange;
+        animationFrameId = requestAnimationFrame(() => {
+          const deltaX = e.clientX - startPoint.x;
+          const deltaY = e.clientY - startPoint.y;
+          
+          let newWidth = initialSize.width;
+          let newHeight = initialSize.height;
+          let newX = initialPosition.x;
+          let newY = initialPosition.y;
+          let scaleX = 1;
+          let scaleY = 1;
+          
+          if (resizeDirection.includes('e')) {
+            newWidth = Math.max(100, initialSize.width + deltaX);
+            scaleX = newWidth / initialSize.width;
+          } else if (resizeDirection.includes('w')) {
+            const widthChange = Math.min(deltaX, initialSize.width - 100);
+            newWidth = initialSize.width - widthChange;
+            newX = initialPosition.x + widthChange;
+            scaleX = newWidth / initialSize.width;
+          }
+          
+          if (resizeDirection.includes('s')) {
+            newHeight = Math.max(100, initialSize.height + deltaY);
+            scaleY = newHeight / initialSize.height;
+          } else if (resizeDirection.includes('n')) {
+            const heightChange = Math.min(deltaY, initialSize.height - 100);
+            newHeight = initialSize.height - heightChange;
+            newY = initialPosition.y + heightChange;
+            scaleY = newHeight / initialSize.height;
+          }
+          
+          // Update element positions based on section resizing
+          updateElementPositions(0, 0, scaleX, scaleY);
+          
+          // Update section dimensions and position
           updateSection(section.id, {
-            position: { 
-              x: initialPosition.x + widthChange, 
-              y: initialPosition.y 
-            }
+            width: newWidth,
+            height: newHeight,
+            position: { x: newX, y: newY }
           });
-        }
-        
-        if (resizeDirection.includes('s')) {
-          newHeight = Math.max(100, initialSize.height + deltaY);
-        } else if (resizeDirection.includes('n')) {
-          const heightChange = Math.min(deltaY, initialSize.height - 100);
-          newHeight = initialSize.height - heightChange;
-          updateSection(section.id, {
-            position: { 
-              x: initialPosition.x, 
-              y: initialPosition.y + heightChange 
-            }
-          });
-        }
-        
-        updateSection(section.id, {
-          width: newWidth,
-          height: newHeight,
         });
       }
     };
     
     const handleMouseUp = () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      
       if (isDragging || isResizing) {
         setIsDragging(false);
         setIsResizing(false);
+        setOriginalElementPositions({});
         document.body.style.cursor = '';
+        lastX = 0;
+        lastY = 0;
       }
     };
     
@@ -132,10 +203,13 @@ const Section: React.FC<SectionProps> = ({ section, elements, nestedSections = [
     }
     
     return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, isResizing, dragOffset, section.id, updateSection, resizeDirection, startPoint, initialSize, initialPosition]);
+  }, [isDragging, isResizing, dragOffset, section, updateSection, updateElement, resizeDirection, startPoint, initialSize, initialPosition, originalElementPositions, elements]);
   
   // Apply section styles
   const sectionStyle = {

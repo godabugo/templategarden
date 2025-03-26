@@ -62,47 +62,57 @@ const Element: React.FC<ElementProps> = ({ element }) => {
   
   // Handle mouse movement for dragging or resizing
   useEffect(() => {
+    let animationFrameId: number;
+    
     const handleMouseMove = (e: MouseEvent) => {
       if (isDragging) {
-        // Update element position during drag
-        const newPosition = {
-          x: Math.max(0, e.clientX - dragOffset.x),
-          y: Math.max(0, e.clientY - dragOffset.y),
-        };
-        updateElement(element.id, { position: newPosition });
+        // Update element position during drag using requestAnimationFrame for better performance
+        animationFrameId = requestAnimationFrame(() => {
+          const newPosition = {
+            x: Math.max(0, e.clientX - dragOffset.x),
+            y: Math.max(0, e.clientY - dragOffset.y),
+          };
+          updateElement(element.id, { position: newPosition });
+        });
       } else if (isResizing && resizeDirection) {
-        // Handle resizing based on the direction
-        const deltaX = e.clientX - startPoint.x;
-        const deltaY = e.clientY - startPoint.y;
-        
-        let newWidth = initialSize.width;
-        let newHeight = initialSize.height;
-        let newX = initialPosition.x;
-        let newY = initialPosition.y;
-        
-        if (resizeDirection.includes('e')) {
-          newWidth = Math.max(50, initialSize.width + deltaX);
-        } else if (resizeDirection.includes('w')) {
-          newWidth = Math.max(50, initialSize.width - deltaX);
-          newX = initialPosition.x + (initialSize.width - newWidth);
-        }
-        
-        if (resizeDirection.includes('s')) {
-          newHeight = Math.max(20, initialSize.height + deltaY);
-        } else if (resizeDirection.includes('n')) {
-          newHeight = Math.max(20, initialSize.height - deltaY);
-          newY = initialPosition.y + (initialSize.height - newHeight);
-        }
-        
-        updateElement(element.id, {
-          width: newWidth,
-          height: newHeight,
-          position: { x: newX, y: newY },
+        // Handle resizing based on the direction using requestAnimationFrame
+        animationFrameId = requestAnimationFrame(() => {
+          const deltaX = e.clientX - startPoint.x;
+          const deltaY = e.clientY - startPoint.y;
+          
+          let newWidth = initialSize.width;
+          let newHeight = initialSize.height;
+          let newX = initialPosition.x;
+          let newY = initialPosition.y;
+          
+          if (resizeDirection.includes('e')) {
+            newWidth = Math.max(50, initialSize.width + deltaX);
+          } else if (resizeDirection.includes('w')) {
+            newWidth = Math.max(50, initialSize.width - deltaX);
+            newX = initialPosition.x + (initialSize.width - newWidth);
+          }
+          
+          if (resizeDirection.includes('s')) {
+            newHeight = Math.max(20, initialSize.height + deltaY);
+          } else if (resizeDirection.includes('n')) {
+            newHeight = Math.max(20, initialSize.height - deltaY);
+            newY = initialPosition.y + (initialSize.height - newHeight);
+          }
+          
+          updateElement(element.id, {
+            width: newWidth,
+            height: newHeight,
+            position: { x: newX, y: newY },
+          });
         });
       }
     };
     
     const handleMouseUp = () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      
       if (isDragging || isResizing) {
         setIsDragging(false);
         setIsResizing(false);
@@ -116,6 +126,9 @@ const Element: React.FC<ElementProps> = ({ element }) => {
     }
     
     return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
